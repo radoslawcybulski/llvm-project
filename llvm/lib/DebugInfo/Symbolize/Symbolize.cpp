@@ -12,14 +12,14 @@
 
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 
-#include "SymbolizableObjectFile.h"
-
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Config/config.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
 #include "llvm/DebugInfo/PDB/PDBContext.h"
+#include "llvm/DebugInfo/Symbolize/SymbolizableObjectFile.h"
+#include "llvm/Debuginfod/Debuginfod.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/MachO.h"
@@ -384,7 +384,14 @@ bool findDebugBinary(const std::vector<std::string> &DebugFileDirectory,
       }
     }
   }
-  return false;
+  // Try debuginfod client cache and known servers.
+  Expected<std::string> PathOrErr = getCachedOrDownloadDebuginfo(BuildID);
+  if (!PathOrErr) {
+    consumeError(PathOrErr.takeError());
+    return false;
+  }
+  Result = *PathOrErr;
+  return true;
 }
 
 } // end anonymous namespace

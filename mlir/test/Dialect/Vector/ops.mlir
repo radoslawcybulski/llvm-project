@@ -45,11 +45,11 @@ func @vector_transfer_ops(%arg0: memref<?x?xf32>,
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : i1
 
-  %vf0 = splat %f0 : vector<4x3xf32>
-  %v0 = splat %c0 : vector<4x3xi32>
-  %vi0 = splat %i0 : vector<4x3xindex>
+  %vf0 = vector.splat %f0 : vector<4x3xf32>
+  %v0 = vector.splat %c0 : vector<4x3xi32>
+  %vi0 = vector.splat %i0 : vector<4x3xindex>
   %m = arith.constant dense<[0, 0, 1, 0, 1]> : vector<5xi1>
-  %m2 = splat %i1 : vector<5x4xi1>
+  %m2 = vector.splat %i1 : vector<5x4xi1>
   //
   // CHECK: vector.transfer_read
   %0 = vector.transfer_read %arg0[%c3, %c3], %f0 {permutation_map = affine_map<(d0, d1)->(d0)>} : memref<?x?xf32>, vector<128xf32>
@@ -106,9 +106,9 @@ func @vector_transfer_ops_tensor(%arg0: tensor<?x?xf32>,
   %c0 = arith.constant 0 : i32
   %i0 = arith.constant 0 : index
 
-  %vf0 = splat %f0 : vector<4x3xf32>
-  %v0 = splat %c0 : vector<4x3xi32>
-  %vi0 = splat %i0 : vector<4x3xindex>
+  %vf0 = vector.splat %f0 : vector<4x3xf32>
+  %v0 = vector.splat %c0 : vector<4x3xi32>
+  %vi0 = vector.splat %i0 : vector<4x3xindex>
 
   //
   // CHECK: vector.transfer_read
@@ -578,6 +578,25 @@ func @vector_load_and_store_1d_vector_memref(%memref : memref<200x100xvector<8xf
   return
 }
 
+// CHECK-LABEL: @vector_load_and_store_scalable_vector_memref
+func @vector_load_and_store_scalable_vector_memref(%v: vector<[4]xi32>, %m: memref<?xi32>) -> vector<[4]xi32> {
+  %c0 = arith.constant 0 : index
+  // CHECK: vector.load {{.*}}: memref<?xi32>, vector<[4]xi32>
+  %0 = vector.load %m[%c0] : memref<?xi32>, vector<[4]xi32>
+  // CHECK: vector.store {{.*}}: memref<?xi32>, vector<[4]xi32>
+  vector.store %v, %m[%c0] : memref<?xi32>, vector<[4]xi32>
+  return %0 : vector<[4]xi32>
+}
+
+func @vector_load_and_store_1d_scalable_vector_memref(%memref : memref<200x100xvector<8xf32>>,
+                                                      %i : index, %j : index) {
+  // CHECK: %[[ld:.*]] = vector.load %{{.*}}[%{{.*}}] : memref<200x100xvector<8xf32>>, vector<8xf32>
+  %0 = vector.load %memref[%i, %j] : memref<200x100xvector<8xf32>>, vector<8xf32>
+  // CHECK: vector.store %[[ld]], %{{.*}}[%{{.*}}] : memref<200x100xvector<8xf32>>, vector<8xf32>
+  vector.store %0, %memref[%i, %j] : memref<200x100xvector<8xf32>>, vector<8xf32>
+  return
+}
+
 // CHECK-LABEL: @vector_load_and_store_out_of_bounds
 func @vector_load_and_store_out_of_bounds(%memref : memref<7xf32>) {
   %c0 = arith.constant 0 : index
@@ -685,9 +704,42 @@ func @extract_insert_map(%v: vector<32xf32>, %v2: vector<16x32xf32>,
 
 // CHECK-LABEL: @multi_reduction
 func @multi_reduction(%0: vector<4x8x16x32xf32>) -> f32 {
-  %1 = vector.multi_reduction #vector.kind<add>, %0 [1, 3] :
+  %1 = vector.multi_reduction <add>, %0 [1, 3] :
     vector<4x8x16x32xf32> to vector<4x16xf32>
-  %2 = vector.multi_reduction #vector.kind<add>, %1 [0, 1] :
+  %2 = vector.multi_reduction <add>, %1 [0, 1] :
     vector<4x16xf32> to f32
   return %2 : f32
+}
+
+// CHECK-LABEL: @get_vector_scale
+func @get_vector_scale() -> index {
+  // CHECK: vector.vscale
+  %0 = vector.vscale
+  return %0 : index
+}
+
+// CHECK-LABEL: @vector_scan
+func @vector_scan(%0: vector<4x8x16x32xf32>) -> vector<4x8x16x32xf32> {
+  %1 = arith.constant dense<0.0> : vector<4x16x32xf32>
+  %2:2 = vector.scan <add>, %0, %1 {reduction_dim = 1 : i64, inclusive = true} :
+    vector<4x8x16x32xf32>, vector<4x16x32xf32>
+  return %2#0 : vector<4x8x16x32xf32>
+}
+
+// CHECK-LABEL: func @test_splat_op
+// CHECK-SAME: [[S:%arg[0-9]+]]: f32
+func @test_splat_op(%s : f32) {
+  // CHECK: vector.splat [[S]] : vector<8xf32>
+  %v = vector.splat %s : vector<8xf32>
+  
+  // CHECK: vector.splat [[S]] : vector<4xf32>
+  %u = "vector.splat"(%s) : (f32) -> vector<4xf32>
+  return
+}
+
+// CHECK-LABEL: func @vector_splat_0d(
+func @vector_splat_0d(%a: f32) -> vector<f32> {
+  // CHECK: vector.splat %{{.*}} : vector<f32>
+  %0 = vector.splat %a : vector<f32>
+  return %0 : vector<f32>
 }

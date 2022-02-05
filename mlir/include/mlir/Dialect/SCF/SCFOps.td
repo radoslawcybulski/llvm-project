@@ -21,19 +21,18 @@ def SCF_Dialect : Dialect {
   let name = "scf";
   let cppNamespace = "::mlir::scf";
   let dependentDialects = ["arith::ArithmeticDialect"];
+  let emitAccessorPrefix = kEmitAccessorPrefix_Prefixed;
 }
 
 // Base class for SCF dialect ops.
-class SCF_Op<string mnemonic, list<OpTrait> traits = []> :
+class SCF_Op<string mnemonic, list<Trait> traits = []> :
     Op<SCF_Dialect, mnemonic, traits> {
   // For every standard op, there needs to be a:
   //   * void print(OpAsmPrinter &p, ${C++ class of Op} op)
-  //   * LogicalResult verify(${C++ class of Op} op)
   //   * ParseResult parse${C++ class of Op}(OpAsmParser &parser,
   //                                         OperationState &result)
   // functions.
   let printer = [{ return ::print(p, *this); }];
-  let verifier = [{ return ::verify(*this); }];
   let parser = [{ return ::parse$cppClass(parser, result); }];
 }
 
@@ -55,9 +54,6 @@ def ConditionOp : SCF_Op<"condition", [
 
   let assemblyFormat =
       [{ `(` $condition `)` attr-dict ($args^ `:` type($args))? }];
-
-  // Override the default verifier, everything is checked by traits.
-  let verifier = ?;
 }
 
 //===----------------------------------------------------------------------===//
@@ -113,6 +109,7 @@ def ExecuteRegionOp : SCF_Op<"execute_region"> {
   let hasCanonicalizer = 1;
 
   let hasFolder = 0;
+  let hasVerifier = 1;
 }
 
 def ForOp : SCF_Op<"for",
@@ -308,18 +305,16 @@ def ForOp : SCF_Op<"for",
     /// induction variable. LoopOp only has one region, so 0 is the only valid
     /// value for `index`.
     OperandRange getSuccessorEntryOperands(unsigned index);
-
-    /// Returns the number of invocations of the body block if the loop bounds
-    /// are constants. Returns `kUnknownNumRegionInvocations` otherwise.
-    void getNumRegionInvocations(ArrayRef<Attribute> operands,
-                                 SmallVectorImpl<int64_t> &countPerRegion);
   }];
 
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def IfOp : SCF_Op<"if",
-      [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+      [DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                                 ["getNumRegionInvocations",
+                                  "getRegionInvocationBounds"]>,
        SingleBlockImplicitTerminator<"scf::YieldOp">, RecursiveSideEffects,
        NoRegionArguments]> {
   let summary = "if-then-else operation";
@@ -391,21 +386,22 @@ def IfOp : SCF_Op<"if",
   let extraClassDeclaration = [{
     OpBuilder getThenBodyBuilder(OpBuilder::Listener *listener = nullptr) {
       Block* body = getBody(0);
-      return results().empty() ? OpBuilder::atBlockTerminator(body, listener)
-                               : OpBuilder::atBlockEnd(body, listener);
+      return getResults().empty() ? OpBuilder::atBlockTerminator(body, listener)
+                                  : OpBuilder::atBlockEnd(body, listener);
     }
     OpBuilder getElseBodyBuilder(OpBuilder::Listener *listener = nullptr) {
       Block* body = getBody(1);
-      return results().empty() ? OpBuilder::atBlockTerminator(body, listener)
-                               : OpBuilder::atBlockEnd(body, listener);
+      return getResults().empty() ? OpBuilder::atBlockTerminator(body, listener)
+                                  : OpBuilder::atBlockEnd(body, listener);
     }
     Block* thenBlock();
     YieldOp thenYield();
     Block* elseBlock();
     YieldOp elseYield();
   }];
-
+  let hasFolder = 1;
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def ParallelOp : SCF_Op<"parallel",
@@ -482,11 +478,12 @@ def ParallelOp : SCF_Op<"parallel",
     ValueRange getInductionVars() {
       return getBody()->getArguments();
     }
-    unsigned getNumLoops() { return step().size(); }
-    unsigned getNumReductions() { return initVals().size(); }
+    unsigned getNumLoops() { return getStep().size(); }
+    unsigned getNumReductions() { return getInitVals().size(); }
   }];
 
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def ReduceOp : SCF_Op<"reduce", [HasParent<"ParallelOp">]> {
@@ -535,6 +532,7 @@ def ReduceOp : SCF_Op<"reduce", [HasParent<"ParallelOp">]> {
 
   let arguments = (ins AnyType:$operand);
   let regions = (region SizedRegion<1>:$reductionOperator);
+  let hasVerifier = 1;
 }
 
 def ReduceReturnOp :
@@ -553,6 +551,7 @@ def ReduceReturnOp :
 
   let arguments = (ins AnyType:$result);
   let assemblyFormat = "$result attr-dict `:` type($result)";
+  let hasVerifier = 1;
 }
 
 def WhileOp : SCF_Op<"while",
@@ -679,10 +678,13 @@ def WhileOp : SCF_Op<"while",
   let extraClassDeclaration = [{
     OperandRange getSuccessorEntryOperands(unsigned index);
     ConditionOp getConditionOp();
+    YieldOp getYieldOp();
+    Block::BlockArgListType getBeforeArguments();
     Block::BlockArgListType getAfterArguments();
   }];
 
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def YieldOp : SCF_Op<"yield", [NoSideEffect, ReturnLike, Terminator,
@@ -706,10 +708,6 @@ def YieldOp : SCF_Op<"yield", [NoSideEffect, ReturnLike, Terminator,
 
   let assemblyFormat =
       [{  attr-dict ($results^ `:` type($results))? }];
-
-  // Override default verifier (defined in SCF_Op), no custom verification
-  // needed.
-  let verifier = ?;
 }
 
 #endif // MLIR_DIALECT_SCF_SCFOPS
